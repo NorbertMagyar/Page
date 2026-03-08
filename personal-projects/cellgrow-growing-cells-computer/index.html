@@ -68,7 +68,7 @@
       <img src="../../photo2.jpg" alt="Portrait of Norbert Magyar" class="profile-photo" />
       <div class="header-content">
         <h1>Norbert Magyar, PhD</h1>
-        <p class="tagline">Senior Software Engineer | HPC • Space Systems • AI </p>
+        <p class="tagline">Senior Software Engineer | HPC • Space Systems • AI | Astrophysics PhD</p>
         <nav>
           <a href="../../index.html">Home</a>
           <a href="../../index.html#projects">Projects</a>
@@ -86,8 +86,8 @@
       <p><a class="back-link" href="../index.html">← Back to Personal Projects Blog</a></p>
 
       <article class="post-card post-full">
-        <p class="post-meta"><time datetime="2026-02-27">February 27, 2026</time> • Cell Growth • Simulation</p>
-        <h2><br>CellGrow: growing cells in a computer</h2>
+        <p class="post-meta"><time datetime="2026-02-27">February 27, 2026</time> • Cell Growth • Simulation<br><br></p>
+        <h1>CellGrow: growing cells in a computer</h1>
         <div class="post-body">
           <p>
           <br>
@@ -119,21 +119,105 @@
             <br><br>
             My aim with this model was mostly to have fun coding it and to see how far can I get with my simple approach. And of course to get some pretty pictures and animations. 
             The script, written in Python and available on my <a href="https://github.com/NorbertMagyar/CellGrow" target="_blank" rel="noopener">GitHub</a>, performs a clear goal:
-            starting from a single cell, which are represented as little spheres of well-defined radius, follow some simple rules defining cell division, statis, and apoptosis, in a step-wise continous evolution in 3D space.
-            
-
-           
+            starting from a single cell, which are represented as little spheres of fixed radius, follow some simple rules defining cell division, stasis, and apoptosis, in a step-wise evolution in continous 3D space.
+          </p>
+          <h4>Algorithm description</h4>
+          <p>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;With every iteration, all cells (represented only through a single point in 3D space in the memory) are looped through and checked whether they should divide, stay, or die. There are multiple parameters that control this behaviour. 
+            If cells get too crowded, above the division threshold (quantified as the number of neighbouring cells within a specified radius), division is halted. If crowding becomes
+            even higher, cells can also be instructed to 'die', or deleted from the list of cells.
+            If cells are allowed to divide, two cells are created from the parent cell; placed at a specified distance, another parameter of the model.
           </p>
           <p>
-            I will add the model formulation, simulation setup, and first results soon.
+            The division of cells opens up the first important algorithmic decisions to be taken: one, along which direction should the cells divide and two,
+            how do we avoid overlapping cells? <br>
+            The directionality of division is an important generator of structure for the growing cell mass, and it is inspired by the biological phenomenon of 
+            <a href="https://en.wikipedia.org/wiki/Cell_polarity" target="_blank" rel="noopener">cell polarity</a>. Naturally, directionality only makes sense once there are 
+            multiple cells. Thus, in order to make a decision on directionality <b>relative</b> to other cells, we calculate for each cell a position vector, representing the sum
+            of vectors to neighbouring cells. The magnitude and direction of this position vector determines two things, respectively: whether the cell is on the surface or inside the local cell mass and,
+            which direction is towards the local 'interior' of the cell mass. By controlling the division direction with respect to this position vector, we can instruct cells to
+            divide 'tangentially' to the local cell mass, that is, along the cell surface, or 'radially' away from the cell mass. <br><br>
+            What about overlap? Using the position vector, we can partially avoid overlap, however, in general, it is not avoidable. Therefore, after cell division, an iterative relataxion
+            step is required that pushes cells away if there is an overlap. The same relaxation step can also be used to enforce cell adhesion, or in other words, cells 'sticking' together. 
+            That is, applying an attractive force to cells that are too far apart. For relaxation Hooke's law is used, which can be thought of as having springs acting between cells that push 
+            or pull neighbouring cells to the division split distance.
           </p>
+          <p>Below, a cell mass growth simulation is performed over 15 generations, enforcing tangetial division to the mass surface:</p>
             <div class="video-item">
-              <p class="video-item-title">Dividing cells</p>
+              <p class="video-item-title"><br>Dividing cells</p>
               <video controls preload="metadata">
                 <source src="https://raw.githubusercontent.com/NorbertMagyar/CellGrow/main/cell_growth_cr_12_de_16_dir_tangential_growdemo.mp4" type="video/mp4" />
               </video>
-              <p class="video-item-caption">Example run of cell growth and division in CellGrow for 15 generations</p>
+              <p class="video-item-caption">Example run of cell growth and division in CellGrow for 15 generations. Stay threshold is 12 cells in the neighbourhood 
+                (defined as 2.1 cell radii) and apoptosis threshold is 16 cells. Final number of cells: 3730.
+              </p>
             </div>  
+          <p><br>
+            An important numerical aspect of applying these cell growth rules is to keep neighbour operations fast as the colony grows. In CellGrow, this is done with a
+            <b>uniform-grid spatial hash</b>: each cell is inserted into a 3D grid bucket and, for every query, only the 27 adjacent buckets are scanned. This keeps neighbour
+            searches local and shifts the dominant per-step work from naive all-pairs \(\mathcal{O}(N^2)\) to approximately \(\mathcal{O}(k \cdot N)\), where \(k\) is the average
+            local neighbour count. The simulation state itself is stored in <b>CuPy</b> arrays on GPU memory, and heavy local operations (neighbour-resultant accumulation,
+            density counting, and spring/overlap relaxation) are executed through <b>CUDA raw kernels</b>, which removes most Python-loop overhead. Distances and vectors are still
+            evaluated continuously in Cartesian space (the grid is only an acceleration structure, not a discretization of motion). In practice, this combination of
+            grid-based candidate pruning + GPU kernels is what enables interactive-scale runs from a single founder cell up to large colonies in reasonable runtime. <br>
+            Another significant speedup was achieved by using <a href="https://pyvista.org/"target="_blank" rel="noopener">PyVista</a> for the visualisation of the cell colony. 
+            The speedup compared to <b>matplotlib</b> for visualising a large number of cells (up to half a million), including specular lighting, is truly impressive.
+          </p>
+          <h4>Inducing morphology: Reaction-Diffusion calculations</h4>
+          <p>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://en.wikipedia.org/wiki/Morphogenesis" target="_blank" rel="noopener">Morphogenesis</a> is the process through which
+            a lump of cells develop various shapes. Alan Turing's pioneering work on the topic, presented in the seminal 1952 paper "The chemical basis of morphogenesis", showed that 
+            the diffusion of two chemical signals, one acting as an activator of growth and the other as a deactivator can lead naturally to complex patterns, now know as Turing pattern.
+            Since then, several biological so-called 'morphogens' have been discovered that act as promoters or inhibitors of cell growth, and lead to a wide range of patterning throughout life, 
+            from the appearance of fingers on limbs to zebra's stripes, and beyond. One morphogen that plays a crucial role in animal morphogenesis is the 
+            <a href="https://en.wikipedia.org/wiki/Sonic_hedgehog_protein" target="_blank" rel="noopener">Sonic hedgehog protein</a> (it's really called that way). <br>
+            In order to generate Turing patterns in CellGrow, and to check whether it can lead to some interesting morphologies, I have implemented the Gray-Scott model:
+            \[\begin{aligned}\frac{\partial u}{\partial t}&amp;=\nabla^2 u+u^2v - (a+b)u,\\ \frac{\partial v}{\partial t}&amp;=D\nabla^2v-u^2v + a(1 - v),\end{aligned}\]
+            where \(u\) and \(v\) are assigned to each cell, and the coefficients \(a\) and \(b\) control various patterning behaviours. Diffusion takes place through averaging across neighbouring cells, and advancing in time uses Euler's method. <br>
+            While researching on the Gray-Scott model, I have stumbled upon the incredibly useful and user-friendly PDE solver and visalizer website called 
+            <a href="https://visualpde.com/" target="_blank" rel="noopener">VisualPDE</a>, which showcases tens of interesting two-dimensional PDEs across various areas of science, including the 
+            <a href="https://visualpde.com/nonlinear-physics/gray-scott">Gray-Scott model</a>. This helped me to reality-check the validity of my model, which instead of being calculated on a fixed 
+            two-dimensional grid, it is calculated across neighbouring points in 3D space. Remarkably, there is a high degree of correspondence in patterning between the 2D model on VisualPDE and what
+            I observe evolving across the cells, that helped me guide the process.<br>
+            Below is an example of the "Labyrinthine" patterning (\(a = 0.037; b = 0.06\)), with reaction-diffusion only starting after the 20th iteration: 
+          </p>
+            <div class="video-item">
+              <p class="video-item-title"><br>Reaction-Diffusion evolution</p>
+              <video controls preload="metadata">
+                <source src="https://raw.githubusercontent.com/NorbertMagyar/CellGrow/main/cell_growth_cr_12_de_16_dir_tangential_RD_demo.mp4" type="video/mp4" />
+              </video>
+              <p class="video-item-caption">Showing the value of the variable \(u\) in each cell. Initial seed of u = 1 in a cluster of surface cells. All cells are set to stasis once reaction-diffusion 
+                starts after the 20th iteration, for demonstration purposes.
+              </p>
+            </div> 
+          <p><br>
+            Once the reaction-diffusion variables are inside cells and evolving, there are a myriad options to choose from what to do with them: we can make division, statis, apoptosis, polarity, and so on, depend on the variables \(u\) and \(v\). 
+            I have played around with turning these knobs more than I wish to admit, but I was also rewarded, as you will see below, with some very interesting patterns. 
+            Additionally, we can make polarity align between cells to various degrees, the alignment strength depend on the reaction-diffusion variables, and furthermore, to have the relaxation step only act along the polarity of each cell. 
+            The possibilies on how these various dynamics interact are endless, leading to a vast parameter space to be explored in order to find interesting dynamics.
+            <br><br>
+            Below you will see a number of runs that I found to lead to the most interesting morphologies.
+          </p>
+            <div class="video-item">
+              <p class="video-item-title"><br>Allowing polarities to align between cells, with some random variation</p>
+              <video controls preload="metadata">
+                <source src="https://raw.githubusercontent.com/NorbertMagyar/CellGrow/main/flyby.mp4" type="video/mp4" />
+              </video>
+            </div> 
+            <div class="video-item">
+              <p class="video-item-title"><br>Branching cells</p>
+              <video controls preload="metadata">
+                <source src="https://raw.githubusercontent.com/NorbertMagyar/CellGrow/main/branching.mp4" type="video/mp4" />
+              </video>
+              <p class="video-item-caption">Low \(u\) promotes cell growth, high \(u\) kills cells</p>
+            </div> 
+            <div class="video-item">
+              <p class="video-item-title"><br>Complex morphology flyby</p>
+              <video controls preload="metadata">
+                <source src="https://raw.githubusercontent.com/NorbertMagyar/CellGrow/main/flyby2.mp4" type="video/mp4" />
+              </video>
+              <p class="video-item-caption"></p>
+            </div> 
         </div>
       </article>
     </main>
