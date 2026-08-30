@@ -215,8 +215,14 @@
     const loopButton = document.getElementById("loop-btn");
     const renderButton = document.getElementById("render-btn");
     const exportButton = document.getElementById("export-btn");
+    const exportMenuWrap = document.getElementById("export-menu-wrap");
+    const exportMenuPanel = document.getElementById("export-menu-panel");
+    const exportWavButton = document.getElementById("export-wav-btn");
+    const exportMidButton = document.getElementById("export-mid-btn");
     const resetViewportButton = document.getElementById("reset-viewport-btn");
     const projectSaveButton = document.getElementById("project-save-btn");
+    const projectExportWavButton = document.getElementById("project-export-wav-btn");
+    const projectExportMidButton = document.getElementById("project-export-mid-btn");
     const projectLoadButton = document.getElementById("project-load-btn");
     const projectLoadInput = document.getElementById("project-load-input");
     const tabStrip = document.getElementById("tab-strip");
@@ -4383,11 +4389,26 @@
 
   function downloadTextFile(filename, text, mimeType = "application/json") {
     const blob = new Blob([text], { type: mimeType });
+    downloadBlob(filename, blob);
+  }
+
+  function downloadBlob(filename, blob) {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = filename;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  function currentProjectBaseName() {
+    const activeTab = currentTabRecord();
+    if (!activeTab) {
+      return "Project-1";
+    }
+    if (activeTab.settings?.projectFilename) {
+      return projectBaseNameFromFilename(activeTab.settings.projectFilename);
+    }
+    return normalizeProjectSaveBaseName(activeTab.name || "Project-1");
   }
 
   function persistSessionProjectNow() {
@@ -4449,6 +4470,37 @@
     } finally {
       await writable.close();
     }
+  }
+
+  async function writeBlobToFileHandle(handle, blob) {
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(blob);
+    } finally {
+      await writable.close();
+    }
+  }
+
+  async function saveBlobWithPicker(suggestedName, blob, types) {
+    if (!("showSaveFilePicker" in window)) {
+      throw new Error("This browser does not support the File System Access API.");
+    }
+    const handle = await window.showSaveFilePicker({
+      suggestedName,
+      types
+    });
+    await writeBlobToFileHandle(handle, blob);
+    return handle;
+  }
+
+  async function pickSaveFileHandle(suggestedName, types) {
+    if (!("showSaveFilePicker" in window)) {
+      throw new Error("This browser does not support the File System Access API.");
+    }
+    return window.showSaveFilePicker({
+      suggestedName,
+      types
+    });
   }
 
   async function saveSoundpaintProject() {
@@ -9642,6 +9694,142 @@
     return new Blob([buffer], { type: "audio/wav" });
   }
 
+  function pushAscii(bytes, text) {
+    for (let i = 0; i < text.length; i += 1) {
+      bytes.push(text.charCodeAt(i) & 0xff);
+    }
+  }
+
+  function pushUint16BE(bytes, value) {
+    bytes.push((value >>> 8) & 0xff, value & 0xff);
+  }
+
+  function pushUint32BE(bytes, value) {
+    bytes.push((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+  }
+
+  function encodeMidiVarLen(value) {
+    let buffer = value & 0x7f;
+    const bytes = [];
+    while ((value >>= 7)) {
+      buffer <<= 8;
+      buffer |= ((value & 0x7f) | 0x80);
+    }
+    while (true) {
+      bytes.push(buffer & 0xff);
+      if (buffer & 0x80) {
+        buffer >>= 8;
+      } else {
+        break;
+      }
+    }
+    return bytes;
+  }
+
+  function midiProgramForBackend(backend) {
+    switch (backend) {
+      case "piano-samples": return 0;
+      case "violin-samples":
+      case "violin-fluidr3-samples": return 40;
+      case "viola-samples": return 41;
+      case "cello-samples": return 42;
+      case "contrabass-samples": return 43;
+      case "pipe-organ-samples": return 19;
+      case "steel-guitar-samples": return 25;
+      case "nylon-guitar-samples": return 24;
+      case "piccolo-samples": return 72;
+      case "flute-samples": return 73;
+      case "oboe-samples": return 68;
+      case "clarinet-samples": return 71;
+      case "bassoon-samples": return 70;
+      case "french-horn-samples": return 60;
+      case "trumpet-samples": return 56;
+      case "trombone-samples": return 57;
+      case "tuba-samples": return 58;
+      case "timpani-samples": return 47;
+      default: return 0;
+    }
+  }
+
+  function buildMidiTrackChunk(events) {
+    const bytes = [];
+    let lastTick = 0;
+    for (const event of events) {
+      const delta = Math.max(0, Math.round(event.tick - lastTick));
+      bytes.push(...encodeMidiVarLen(delta));
+      bytes.push(...event.data);
+      lastTick = event.tick;
+    }
+    bytes.push(0x00, 0xff, 0x2f, 0x00);
+    const chunk = [];
+    pushAscii(chunk, "MTrk");
+    pushUint32BE(chunk, bytes.length);
+    chunk.push(...bytes);
+    return chunk;
+  }
+
+  function encodeMidiFile() {
+    const ticksPerQuarter = 480;
+    const bpm = Math.max(1, Math.round(basslineBpm()));
+    const usPerQuarter = Math.round(60000000 / bpm);
+    const scoreLayers = scoreLayersForRender();
+    if (!scoreLayers.length) {
+      throw new Error("There are no score-note layers to export as MIDI.");
+    }
+    const allTracks = [];
+    const tempoTrackEvents = [
+      {
+        tick: 0,
+        data: [0xff, 0x51, 0x03, (usPerQuarter >>> 16) & 0xff, (usPerQuarter >>> 8) & 0xff, usPerQuarter & 0xff]
+      },
+      {
+        tick: 0,
+        data: [0xff, 0x03, 0x05, 0x54, 0x65, 0x6d, 0x70, 0x6f]
+      }
+    ];
+    allTracks.push(buildMidiTrackChunk(tempoTrackEvents));
+
+    scoreLayers.forEach((layer, index) => {
+      const channel = index % 15;
+      const events = [];
+      const nameBytes = Array.from((layer.name || `Layer ${index + 1}`).slice(0, 64)).map((char) => char.charCodeAt(0) & 0xff);
+      events.push({
+        tick: 0,
+        data: [0xff, 0x03, nameBytes.length, ...nameBytes]
+      });
+      events.push({
+        tick: 0,
+        data: [0xc0 | channel, midiProgramForBackend(layer.noteBackend)]
+      });
+      for (const note of layer.scoreEvents) {
+        const startTick = Math.max(0, Math.round(note.startSec * bpm * ticksPerQuarter / 60));
+        const endTick = Math.max(startTick + 1, Math.round((note.startSec + Math.max(0.02, note.durationSec)) * bpm * ticksPerQuarter / 60));
+        const velocity = clamp(Math.round((note.velocity || 0.78) * 127), 1, 127);
+        events.push({
+          tick: startTick,
+          data: [0x90 | channel, clamp(Math.round(note.midi), 0, 127), velocity]
+        });
+        events.push({
+          tick: endTick,
+          data: [0x80 | channel, clamp(Math.round(note.midi), 0, 127), 0]
+        });
+      }
+      events.sort((a, b) => a.tick - b.tick || ((a.data[0] & 0xf0) === 0x80 ? -1 : 1));
+      allTracks.push(buildMidiTrackChunk(events));
+    });
+
+    const bytes = [];
+    pushAscii(bytes, "MThd");
+    pushUint32BE(bytes, 6);
+    pushUint16BE(bytes, 1);
+    pushUint16BE(bytes, allTracks.length);
+    pushUint16BE(bytes, ticksPerQuarter);
+    for (const track of allTracks) {
+      bytes.push(...track);
+    }
+    return new Blob([new Uint8Array(bytes)], { type: "audio/midi" });
+  }
+
   async function renderIfNeeded(reason) {
     if (hasCurrentRenderedBuffer()) {
       return state.renderedBuffer;
@@ -10233,16 +10421,46 @@
   }
 
   async function exportWav() {
-    const buffer = await renderIfNeeded("WAV export");
-    if (!buffer || !state.renderedWav) {
-      return;
+    try {
+      const handle = await pickSaveFileHandle(`${currentProjectBaseName()}.wav`, [
+        {
+          description: "WAV audio",
+          accept: { "audio/wav": [".wav"] }
+        }
+      ]);
+      setStatus("Rendering WAV export...");
+      const buffer = await renderIfNeeded("WAV export");
+      if (!buffer || !state.renderedWav) {
+        return;
+      }
+      await writeBlobToFileHandle(handle, state.renderedWav);
+      setStatus("WAV exported.");
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        setStatus("WAV export cancelled.");
+        return;
+      }
+      throw error;
     }
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(state.renderedWav);
-    link.download = "spectrogram-sketch.wav";
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-    setStatus("WAV exported.");
+  }
+
+  async function exportMidi() {
+    try {
+      const blob = encodeMidiFile();
+      await saveBlobWithPicker(`${currentProjectBaseName()}.mid`, blob, [
+        {
+          description: "MIDI file",
+          accept: { "audio/midi": [".mid", ".midi"] }
+        }
+      ]);
+      setStatus("MIDI exported.");
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        setStatus("MIDI export cancelled.");
+        return;
+      }
+      throw error;
+    }
   }
 
   function clearSpectrogram() {
@@ -12166,7 +12384,16 @@
     }
   }
 
+  function setExportMenuOpen(open) {
+    if (!exportButton || !exportMenuPanel) {
+      return;
+    }
+    exportMenuPanel.hidden = !open;
+    exportButton.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
   function bindControls() {
+    setExportMenuOpen(false);
     const redrawInputs = [
       durationInput,
       minFreqInput,
@@ -12291,6 +12518,18 @@
       projectSaveButton.addEventListener("click", async () => {
         await saveSoundpaintProject();
         closeMenuForElement(projectSaveButton);
+      });
+    }
+    if (projectExportWavButton) {
+      projectExportWavButton.addEventListener("click", async () => {
+        await exportWav();
+        closeMenuForElement(projectExportWavButton);
+      });
+    }
+    if (projectExportMidButton) {
+      projectExportMidButton.addEventListener("click", async () => {
+        await exportMidi();
+        closeMenuForElement(projectExportMidButton);
       });
     }
     if (projectLoadButton && projectLoadInput) {
@@ -12488,7 +12727,29 @@
       });
     }
     renderButton.addEventListener("click", () => renderIfNeeded("audio preview"));
-    exportButton.addEventListener("click", exportWav);
+    if (exportButton && exportMenuPanel) {
+      exportButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setExportMenuOpen(exportMenuPanel.hidden);
+      });
+    }
+    if (exportWavButton) {
+      exportWavButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setExportMenuOpen(false);
+        await exportWav();
+      });
+    }
+    if (exportMidButton) {
+      exportMidButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setExportMenuOpen(false);
+        await exportMidi();
+      });
+    }
     if (undoButton) {
       undoButton.addEventListener("click", undoLastGesture);
     }
@@ -12515,6 +12776,7 @@
       menu.addEventListener("toggle", () => {
         if (menu.open) {
           closeOtherMenus(menu);
+          setExportMenuOpen(false);
         }
       });
     }
@@ -12522,6 +12784,9 @@
       const target = event.target;
       if (!(target instanceof Node)) {
         return;
+      }
+      if (exportMenuWrap && !exportMenuWrap.contains(target)) {
+        setExportMenuOpen(false);
       }
       if (!menuDropdowns.some((menu) => menu.contains(target))) {
         closeOtherMenus(null);
@@ -12561,6 +12826,10 @@
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && state.toolSettingsOpen) {
         setToolSettingsOpen(false);
+        return;
+      }
+      if (event.key === "Escape" && exportMenuPanel && !exportMenuPanel.hidden) {
+        setExportMenuOpen(false);
         return;
       }
       if (event.key === "Escape" && state.cropMode) {

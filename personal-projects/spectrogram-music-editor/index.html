@@ -88,7 +88,7 @@
       <img src="../../photo2.jpg" alt="Portrait of Norbert Magyar" class="profile-photo" />
       <div class="header-content">
         <h1>Norbert Magyar, PhD</h1>
-        <p class="tagline">Senior Software Engineer | HPC • Space Systems • AI | Astrophysics PhD</p>
+        <p class="tagline">Senior Scientist| HPC • Space Systems • AI | Astrophysics PhD</p>
         <nav>
           <a href="/">Home</a>
           <a href="/#projects">Projects</a>
@@ -182,6 +182,23 @@
                           <span>Load</span>
                         </button>
                         <input id="project-load-input" type="file" accept=".json,.soundpaint.json" hidden />
+                      </div>
+                    </label>
+                    <label class="control-stack">
+                      <span>Export</span>
+                      <div class="inline-row project-file-row export-choice-row">
+                        <button id="project-export-wav-btn" type="button" class="action-btn project-action-btn export-choice-btn" title="Export WAV">
+                          <span class="tool-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="M12 4v10"/><path d="M8.5 10.5L12 14l3.5-3.5"/><path d="M5 18h14"/></svg>
+                          </span>
+                          <span>WAV</span>
+                        </button>
+                        <button id="project-export-mid-btn" type="button" class="action-btn project-action-btn export-choice-btn" title="Export MIDI">
+                          <span class="tool-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="M6 5h12"/><path d="M6 10h12"/><path d="M6 15h12"/><path d="M8 5v11a2 2 0 0 0 2 2h8"/></svg>
+                          </span>
+                          <span>MIDI</span>
+                        </button>
                       </div>
                     </label>
                   </div>
@@ -602,12 +619,23 @@
                     </button>
                   </div>
                   <div class="utility-cluster" role="toolbar" aria-label="Editor actions">
-                    <button id="export-btn" type="button" class="action-btn transport-btn" aria-label="Export WAV" title="Export WAV">
-                      <span class="tool-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24"><path d="M12 4v10"/><path d="M8.5 10.5L12 14l3.5-3.5"/><path d="M5 18h14"/></svg>
-                      </span>
-                      <span class="sr-only">Export WAV</span>
-                    </button>
+                    <div id="export-menu-wrap" class="export-menu-wrap">
+                      <button id="export-btn" type="button" class="action-btn transport-btn" aria-label="Export" title="Export" aria-haspopup="menu" aria-expanded="false">
+                        <span class="tool-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24"><path d="M12 4v10"/><path d="M8.5 10.5L12 14l3.5-3.5"/><path d="M5 18h14"/></svg>
+                        </span>
+                        <span class="sr-only">Export</span>
+                      </button>
+                      <div id="export-menu-panel" class="export-menu-panel" role="menu" hidden>
+                        <button id="export-wav-btn" type="button" class="action-btn export-menu-btn" role="menuitem">WAV</button>
+                        <button id="export-mid-btn" type="button" class="action-btn export-menu-btn" role="menuitem">
+                          <span class="tool-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="M6 5h12"/><path d="M6 10h12"/><path d="M6 15h12"/><path d="M8 5v11a2 2 0 0 0 2 2h8"/></svg>
+                          </span>
+                          <span>MIDI</span>
+                        </button>
+                      </div>
+                    </div>
                     <button id="reset-viewport-btn" type="button" class="action-btn transport-btn" aria-label="Reset viewport" title="Reset viewport">
                       <span class="tool-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24"><path d="M6 7.5h12"/><path d="M6 16.5h12"/><path d="M9 5 6 7.5 9 10"/><path d="M15 14l3 2.5-3 2.5"/></svg>
